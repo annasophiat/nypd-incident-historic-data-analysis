@@ -1,0 +1,370 @@
+---
+title: "NYPD Data Analysis"
+date: "7/26/2024"
+output:
+  html_document:
+    df_print: paged
+  pdf_document: default
+---
+
+### NYPD Shooting Incident Data Analysis Report
+
+Hello out there! The goal of this project is to clean, analyze, and model the data from the NYPD Shooting Incident Data Report, which contains all occurrences from 2006 to 2023.
+
+Data Source: <https://catalog.data.gov/dataset/nypd-shooting-incident-data-historic>
+
+```{r nypd_import}
+library(tidyverse)
+
+nypd_raw <- read_csv("https://data.cityofnewyork.us/api/views/833y-fsy8/rows.csv")
+```
+
+```{r nypd_preview}
+head(nypd_raw)
+```
+
+```{r nypd_summary}
+summary(nypd_raw)
+```
+
+```{r sum_na_all_columns}
+colSums(is.na(nypd_raw))
+```
+
+```{r remove_lon_lat_xy_coord}
+nypd = subset(nypd_raw, select=-c(X_COORD_CD, Y_COORD_CD, Lon_Lat))
+nypd
+```
+
+```{r remove_duplicated_rows}
+library(dplyr)
+
+nypd <- distinct(nypd)
+```
+
+```{r replace_null_unknown}
+nypd <- nypd %>% replace(.== "NULL", "UNKNOWN")
+
+nypd <- nypd %>% replace(.== "(null)", "UNKNOWN")
+
+# nypd <- nypd %>% replace(.== "UNKNOWN", NA)
+```
+
+```{r see_column_values}
+unique(nypd$JURISDICTION_CODE)
+```
+
+```{r remove_na_juris_code}
+nypd <- nypd %>% drop_na(JURISDICTION_CODE)
+```
+
+```{r remove_na_latitude_values}
+nypd <- nypd %>% drop_na(Latitude)
+```
+
+```{r drop_na_occur_date_time}
+nypd <- nypd %>% drop_na(OCCUR_DATE)
+
+nypd <- nypd %>% drop_na(OCCUR_TIME)
+```
+
+```{r replace_NA_unknown}
+nypd[is.na(nypd)] <- "UNKNOWN"
+
+nypd
+```
+
+```{r view_all_unique_values}
+all_cols <- lapply(nypd, unique)
+
+unique_cols <- lengths(all_cols)
+
+unique_cols
+```
+
+## Data Visualizations
+
+Here we are performing some more data cleaning and using those cleaned variables to create some visualizations that tell a story about the data overall.
+
+```{r vic_age_group_uniques}
+unique(nypd$VIC_AGE_GROUP)
+```
+
+```{r filter_vic_age_group}
+nypd <- nypd[!(nypd$VIC_AGE_GROUP %in% "1022"), ]
+```
+
+```{r vic_age_group_plot}
+library(ggplot2)
+
+ggplot(data=nypd, aes(x=VIC_AGE_GROUP)) + 
+  geom_bar(fill = 'lightblue') + 
+  ggtitle("Victim Age Groups") + 
+  xlab("Age Group") + 
+  ylab("Total") + theme_minimal()
+```
+
+```{r perp_age_group_plot}
+nypd <- nypd[!(nypd$PERP_AGE_GROUP %in% c("940", "224", "1020")), ]
+
+nypd$PERP_SEX[nypd$PERP_SEX == "U"] <- "UNKNOWN"
+
+ggplot(data=nypd, aes(x=PERP_AGE_GROUP)) + 
+  geom_bar(fill = 'purple') + 
+  ggtitle("Perpetrator Age Groups") + 
+  xlab("Age Group") + 
+  ylab("Total") + theme_minimal()
+```
+
+It looks like the majority of perpetrators do not belong to a specific age group. But the rest are similar in age to their victims, 18-24 and 25-44.
+
+```{r lat_lon_scatter_plot}
+ggplot(nypd, aes(x=Latitude, y=Longitude)) + 
+  geom_point(aes(color=factor(BORO))) + 
+  ggtitle("Location of Occurrence by Borough") + 
+  labs("Borough") + theme_minimal()
+```
+
+```{r borough_bar_count}
+ggplot(data=nypd, aes(x=BORO)) + 
+  geom_bar(fill = 'pink') + 
+  ggtitle("Occurrences by Borough") + 
+  xlab("Borough") + 
+  ylab("Total") + theme_minimal()
+```
+
+The Bronx and Brooklyn have more cases than the rest of the boroughs.
+
+```{r make_count_groups}
+library(janitor)
+
+tabyl(nypd, BORO, VIC_AGE_GROUP)
+```
+
+```{r murder_flag_plot}
+ggplot(data=nypd, aes(x=STATISTICAL_MURDER_FLAG)) + geom_bar(fill = 'blue') +   
+  ggtitle("Statistical Murder Flags") + 
+  xlab("Murder Flagged") + 
+  ylab("Total") + theme_minimal()
+```
+
+Here we can see that there is a large imbalance between occurrences flagged as murder and those that are not flagged. The majority of events are not flagged.
+
+```{r count_perp_age_gender}
+tabyl(nypd, PERP_AGE_GROUP, PERP_RACE, PERP_SEX)
+```
+
+```{r vtree_three_layers}
+library(vtree)
+
+vtree(nypd, c("PERP_AGE_GROUP", "PERP_SEX", "PERP_RACE"), 
+  horiz = TRUE, 
+  fillcolor = c(PERP_AGE_GROUP = "#e7d4e8", 
+                PERP_SEX = "#99d8c9", 
+                PERP_RACE = "#9ecae1"), 
+  keep = list(PERP_SEX = c("M", "F", "UNKNOWN")), showcount = FALSE)
+```
+
+```{r vtree_borough_location}
+vtree(nypd, c("BORO", "LOC_OF_OCCUR_DESC"), 
+      fillcolor = c(BORO="#e7d4e8", LOC_OF_OCCUR_DESC="#99d8c9"), 
+      horiz=TRUE)
+```
+
+```{r convert_occur_date_datetime}
+# nypd[["OCCUR_DATE"]] <- as.POSIXct(nypd[["OCCUR_DATE"]], format ="%m-%d-%Y")
+```
+
+```{r count_occur_precinct}
+library(sqldf)
+library(CGPfunctions)
+
+ggplot(data=nypd, aes(x=PRECINCT)) + 
+  geom_bar(fill = 'brown') +   
+  ggtitle("Occurrences by Precinct") + 
+  xlab("Precinct Number") + 
+  ylab("Total") + theme_minimal()
+```
+
+```{r locations_occur_boro_graph}
+PlotXTabs(nypd, LOC_OF_OCCUR_DESC, BORO) 
+```
+
+```{r plot_perp_age_group_gender}
+PlotXTabs(nypd, PERP_SEX, PERP_AGE_GROUP)
+```
+
+```{r plot_vic_age_group_gender}
+PlotXTabs(nypd, VIC_SEX, VIC_AGE_GROUP)
+```
+
+```{r convert_occur_date}
+library(lubridate)
+
+nypd_date <- nypd %>% mutate(date=mdy(OCCUR_DATE))
+```
+
+```{r clean_data_view}
+nypd_date
+```
+
+### Time Series Visualizations
+
+```{r count_events_per_date}
+nypd_total <- sqldf('SELECT date, COUNT(date) as total FROM nypd_date GROUP BY date ORDER BY date')
+
+nypd_total
+```
+
+```{r mutate_cum_sum_date}
+nypd_cumsum_total <- nypd_total %>% mutate(cum_total=cumsum(total))
+
+nypd_cumsum_total <- subset(nypd_cumsum_total, select=-c(total))
+
+nypd_cumsum_total
+```
+
+The two graphs below are interactive and show that cases have steadily increased (not too fast!) over the years but there is a slight dip in June 2020 followed by an increase in July 2020.
+
+```{r time_series_plot_totals}
+library(TSstudio)
+
+ts_plot(nypd_cumsum_total, 
+        title = "NYPD Historic Shooting Data Cumulative Totals 2006-2023", 
+        Xtitle = "Year", 
+        Ytitle = "Cumulative Total Events", 
+        slider = TRUE)
+```
+
+```{r daily_counts_plot}
+ts_plot(nypd_total, 
+        title = "NYPD Historic Shooting Data Daily Totals", 
+        Xtitle = "Date", 
+        Ytitle = "Total", 
+        slider = TRUE)
+```
+
+## Data Modeling
+
+#### Logistic Regression
+
+After converting our feature and target variables using one-hot encoding methods, we'll be splitting the data 80-20% for training and testing.
+
+If the logistic regression model gives an installation error, try install.packages('glmnet', dependencies=TRUE, type="binary").
+
+```{r importing_packages}
+library(datasets) 
+library(caTools)
+library(party)
+library(magrittr)
+library(tidymodels)
+library(readr)
+```
+
+```{r remove_extra_columns}
+nypd_final <- subset(nypd_date, 
+                     select=-c(INCIDENT_KEY, 
+                               OCCUR_DATE, 
+                               Longitude, 
+                               Latitude, 
+                               OCCUR_TIME, 
+                               date))
+
+nypd_final
+```
+
+```{r target_variable_STATISTICAL_MURDER_FLAG}
+tar_var <- nypd_final[["STATISTICAL_MURDER_FLAG"]]
+
+nypd_final <- subset(nypd_final, select=-c(STATISTICAL_MURDER_FLAG))
+
+nypd_final
+```
+
+```{r create_dummy_variables}
+library(caret)
+library(data.table)
+
+dummy <- dummyVars(" ~ .", data=nypd_final)
+
+nypd_new <- data.frame(predict(dummy, newdata = nypd_final))
+```
+
+```{r add_target_variable_converted}
+nypd_new$STATISTICAL_MURDER_FLAG = c(tar_var)
+```
+
+```{r convert_boolean_target_numerical}
+nypd_new$STATISTICAL_MURDER_FLAG <- as.factor(as.logical(nypd_new$STATISTICAL_MURDER_FLAG))
+```
+
+```{r converted_dataframe}
+nypd_new
+```
+
+```{r split_train_test_dataset}
+set.seed(42)
+
+nypd_split <- sample.split(nypd_new, SplitRatio = 0.8)
+
+train_data <- subset(nypd_new, nypd_split == TRUE)
+test_data <- subset(nypd_new, nypd_split == FALSE)
+```
+
+```{r create_logistic_regression_model}
+rmodel <- logistic_reg(mixture = double(1), penalty = double(1)) %>% set_engine("glmnet") %>% set_mode("classification") %>% fit(STATISTICAL_MURDER_FLAG ~ ., data = train_data)
+
+tidy(rmodel)
+```
+
+```{r logistic_regression_predictions}
+pred_class <- predict(rmodel, new_data = test_data, type = 'class')
+
+pred_proba <- predict(rmodel, new_data = test_data, type = 'prob')
+
+results <- test_data %>% select(STATISTICAL_MURDER_FLAG) %>% bind_cols(pred_class, pred_proba)
+```
+
+```{r logistic_regression_scoring_accuracy}
+accuracy(results, truth = STATISTICAL_MURDER_FLAG, estimate = .pred_class)
+```
+
+```{r logistic_regression_confusion_matrix}
+conf_mat(results, truth = STATISTICAL_MURDER_FLAG, estimate = .pred_class)
+```
+
+```{r manual_calculate_precision}
+library(Metrics)
+
+results$gtruth <- as.integer(as.logical(results$STATISTICAL_MURDER_FLAG))
+results$pred_class <- as.integer(as.logical(results$.pred_class))
+
+precision(results$gtruth, results$pred_class)
+```
+
+```{r calculate_accuracy}
+accuracy(results$gtruth, results$pred_class)
+```
+
+```{r calculate_recall}
+recall(results$gtruth, results$pred_class)
+```
+
+```{r calculate_area_under_roc_surve}
+auc(results$gtruth, results$pred_class)
+```
+
+```{r calculate_root_mean_squared_error}
+rmse(results$gtruth, results$pred_class)
+```
+
+### A Note on Biases
+
+When it comes to data cleaning and manipulation, regardless of the topic, biases always find a way to influence our decisions when it comes to how or why we perform certain procedures. When I was looking at this data set, I noticed that the majority of shooting events reported were from people ages 18-44 with the reminder being under 18 and 45+. This leaves teenagers under 18 and the elderly susceptible to bias when building the model since there isn't a lot of data available for them, making it easier for analysts and scientists to overlook their importance. The same thing can be said for perpetrators although their bias comes from lack of information since the majority of them do not have an assigned age group. In addition, I noticed that the majority of crimes were committed by males, which can easily make any future models biased against males and more lenient towards females. But when it comes to crimes reported, most of those are also from males, making females an incredibly underrepresented group. This could lead to all sorts of problems for models since the odds are overwhelmingly in favor of one gender over another. It's fair to say that most of these biases are from gaps in data and other unknown factors. In many cases, we cannot go back in time to retrieve any lost data so it's important to look at what's available with impartiality to ensure the best possible outcome.
+
+```{r results_table_view}
+results
+```
+
+```{r}
+```
